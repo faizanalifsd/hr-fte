@@ -1,0 +1,148 @@
+# =============================================================================
+# AI JOB APPLICATION SYSTEM - PYTHON DEPENDENCIES
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# WEB FRAMEWORK
+# -----------------------------------------------------------------------------
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+python-multipart==0.0.6
+
+# -----------------------------------------------------------------------------
+# DATABASE
+# -----------------------------------------------------------------------------
+SQLAlchemy==2.0.25
+pymysql==1.1.0
+cryptography==42.0.0  # Required for pymysql
+alembic==1.13.1  # Database migrations
+
+# -----------------------------------------------------------------------------
+# AI SERVICES
+# -----------------------------------------------------------------------------
+
+# Anthropic Claude (OPTIONAL - Used by Claude orchestrator only, not backend sub-agents)
+# anthropic==0.18.1
+# Uncomment above line if you want to use the Claude API from Python code
+
+# OpenAI-compatible SDK — used for both Groq and OpenRouter
+openai>=1.12.0
+
+# Groq client (optional — openai SDK with Groq base URL also works)
+groq>=0.5.0
+
+# -----------------------------------------------------------------------------
+# MCP INTEGRATIONS
+# -----------------------------------------------------------------------------
+
+# Apify Client (for job scraping)
+apify-client==1.6.3
+
+# Google Gmail API
+google-auth==2.27.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.116.0
+
+# -----------------------------------------------------------------------------
+# UTILITIES
+# -----------------------------------------------------------------------------
+
+# Environment variables
+python-dotenv==1.0.0
+
+# HTTP requests
+requests==2.31.0
+
+# Email handling
+email-validator==2.1.0
+
+# Date/time utilities
+python-dateutil==2.8.2
+
+# -----------------------------------------------------------------------------
+# SECURITY
+# -----------------------------------------------------------------------------
+
+# Password hashing (for future user auth)
+passlib[bcrypt]==1.7.4
+
+# JWT tokens (for future user auth)
+python-jose[cryptography]==3.3.0
+
+# -----------------------------------------------------------------------------
+# DEVELOPMENT TOOLS
+# -----------------------------------------------------------------------------
+
+# Code formatting
+black==24.1.1
+
+# Linting
+flake8==7.0.0
+pylint==3.0.3
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+httpx==0.26.0  # For testing FastAPI
+
+# Type checking
+mypy==1.8.0
+
+# -----------------------------------------------------------------------------
+# MONITORING & LOGGING
+# -----------------------------------------------------------------------------
+
+# Structured logging
+python-json-logger==2.0.7
+
+# Performance monitoring (optional)
+# prometheus-client==0.19.0
+
+# -----------------------------------------------------------------------------
+# FILE HANDLING
+# -----------------------------------------------------------------------------
+
+# PDF generation/manipulation
+reportlab==4.0.9
+PyPDF2==3.0.1
+
+# Document conversion
+python-docx==1.1.0
+
+# Markdown processing
+markdown==3.5.2
+
+# -----------------------------------------------------------------------------
+# TASK QUEUE (for scalability - optional)
+# -----------------------------------------------------------------------------
+
+# Celery for background tasks
+# celery==5.3.4
+# redis==5.0.1
+
+# -----------------------------------------------------------------------------
+# PRODUCTION DEPLOYMENT
+# -----------------------------------------------------------------------------
+
+# Production WSGI server
+gunicorn==21.2.0
+
+# Process manager
+supervisor==4.2.5
+
+# -----------------------------------------------------------------------------
+# NOTES
+# -----------------------------------------------------------------------------
+# Install all dependencies:
+#   pip install -r requirements.txt
+#
+# Install development dependencies only:
+#   pip install -r requirements.txt --only-binary :all:
+#
+# Create virtual environment first:
+#   python -m venv venv
+#   source venv/bin/activate  # On Windows: venv\Scripts\activate
+#   pip install -r requirements.txt
+# =============================================================================

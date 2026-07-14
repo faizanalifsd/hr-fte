@@ -1,0 +1,191 @@
+# =============================================================================
+# AI JOB APPLICATION SYSTEM - GIT IGNORE
+# =============================================================================
+
+# Environment variables (CRITICAL - NEVER COMMIT)
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Database configuration (if using PHP config style)
+config/database.php
+config/*.local.*
+
+# =============================================================================
+# PYTHON
+# =============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# =============================================================================
+# DATABASE
+# =============================================================================
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# MySQL dumps
+*.sql
+*.sql.gz
+
+# =============================================================================
+# STORAGE & UPLOADS
+# =============================================================================
+
+# CV storage
+storage/cvs/*
+!storage/cvs/.gitkeep
+
+# Generated outputs
+storage/output/*
+!storage/output/.gitkeep
+
+# Uploaded files
+uploads/*
+!uploads/.gitkeep
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# =============================================================================
+# LOGS
+# =============================================================================
+
+*.log
+logs/
+*.log.*
+
+# =============================================================================
+# FRONTEND (Node.js)
+# =============================================================================
+
+# Dependencies
+Frontend/node_modules/
+Frontend/.pnp
+Frontend/.pnp.js
+
+# Production build
+Frontend/dist/
+Frontend/build/
+
+# Testing
+Frontend/coverage/
+
+# Misc
+Frontend/.DS_Store
+Frontend/.env.local
+Frontend/.env.development.local
+Frontend/.env.test.local
+Frontend/.env.production.local
+
+# =============================================================================
+# OS SPECIFIC
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.directory
+
+# =============================================================================
+# SECURITY & CREDENTIALS
+# =============================================================================
+
+# API keys and secrets
+*.key
+*.pem
+*.cert
+secrets/
+credentials.json
+
+# OAuth tokens
+token.json
+gmail_token.json
+
+# =============================================================================
+# MISC
+# =============================================================================
+
+# Backup files
+*.bak
+*.backup
+*.swp
+*.swo
+
+# Archive files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Test data
+test_data/
+mock_data/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# =============================================================================

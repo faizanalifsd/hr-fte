@@ -1,0 +1,184 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root,
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 20% 90%;
+
+    --card: 222 40% 10%;
+    --card-foreground: 210 20% 90%;
+
+    --popover: 222 40% 10%;
+    --popover-foreground: 210 20% 90%;
+
+    --primary: 187 80% 48%;
+    --primary-foreground: 222 47% 6%;
+
+    --secondary: 222 30% 16%;
+    --secondary-foreground: 210 20% 80%;
+
+    --muted: 222 25% 14%;
+    --muted-foreground: 215 15% 50%;
+
+    --accent: 187 80% 48%;
+    --accent-foreground: 222 47% 6%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 222 20% 18%;
+    --input: 222 20% 18%;
+    --ring: 187 80% 48%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 222 40% 8%;
+    --sidebar-foreground: 210 20% 90%;
+    --sidebar-primary: 187 80% 48%;
+    --sidebar-primary-foreground: 222 47% 6%;
+    --sidebar-accent: 222 30% 16%;
+    --sidebar-accent-foreground: 210 20% 80%;
+    --sidebar-border: 222 20% 18%;
+    --sidebar-ring: 187 80% 48%;
+
+    /* Custom tokens */
+    --glass-bg: 222 40% 12%;
+    --glass-border: 222 20% 22%;
+    --glass-highlight: 187 80% 48%;
+    --surface-elevated: 222 35% 14%;
+    --success: 152 60% 45%;
+    --warning: 38 90% 55%;
+    --info: 210 80% 55%;
+  }
+
+  .light {
+    --background: 0 0% 98%;
+    --foreground: 210 10% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 210 10% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 10% 15%;
+
+    --primary: 152 55% 38%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 10% 94%;
+    --secondary-foreground: 210 10% 35%;
+
+    --muted: 210 10% 94%;
+    --muted-foreground: 210 8% 50%;
+
+    --accent: 152 55% 38%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 210 10% 88%;
+    --input: 210 10% 88%;
+    --ring: 152 55% 38%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 210 10% 96%;
+    --sidebar-foreground: 210 10% 15%;
+    --sidebar-primary: 152 55% 38%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 10% 92%;
+    --sidebar-accent-foreground: 210 10% 35%;
+    --sidebar-border: 210 10% 88%;
+    --sidebar-ring: 152 55% 38%;
+
+    /* Custom tokens */
+    --glass-bg: 0 0% 100%;
+    --glass-border: 210 10% 88%;
+    --glass-highlight: 152 55% 38%;
+    --surface-elevated: 210 10% 96%;
+    --success: 152 60% 38%;
+    --warning: 38 80% 48%;
+    --info: 210 70% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', sans-serif;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply rounded-xl border border-border/50 backdrop-blur-xl;
+    background: linear-gradient(
+      135deg,
+      hsl(var(--glass-bg) / 0.8),
+      hsl(var(--glass-bg) / 0.4)
+    );
+    box-shadow:
+      0 0 0 1px hsl(var(--glass-border) / 0.3),
+      0 8px 32px -8px hsl(var(--foreground) / 0.05),
+      inset 0 1px 0 0 hsl(var(--glass-border) / 0.1);
+    transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .light .glass-panel {
+    background: hsl(var(--glass-bg) / 0.95);
+    box-shadow:
+      0 0 0 1px hsl(var(--glass-border) / 0.5),
+      0 4px 16px -4px hsl(var(--foreground) / 0.06),
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.5);
+  }
+
+  .glass-panel-active {
+    @apply glass-panel;
+    box-shadow:
+      0 0 0 1px hsl(var(--glass-highlight) / 0.2),
+      0 8px 32px -8px hsl(var(--foreground) / 0.05),
+      0 0 20px -4px hsl(var(--glass-highlight) / 0.08),
+      inset 0 1px 0 0 hsl(var(--glass-highlight) / 0.05);
+  }
+
+  .status-glow {
+    box-shadow: 0 0 8px 2px currentColor;
+  }
+
+  .log-line {
+    @apply font-mono text-xs leading-relaxed text-muted-foreground;
+  }
+
+  .log-line::before {
+    content: '› ';
+    @apply text-primary/60;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full;
+    background: hsl(var(--muted-foreground) / 0.2);
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+  }
+}
