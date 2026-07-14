@@ -158,18 +158,28 @@ Respond with ONLY a JSON object, no explanation."""
     def parse_cv(self, cv_text: str) -> Dict[str, Any]:
         """Parse CV text into structured data."""
         prompt = f"""Extract structured information from this CV/resume text and return a JSON object with:
+- name (string or null): candidate's full name
+- location (string or null): current city/country, e.g. "Lahore, Pakistan"
+- phone (string or null): contact phone number
+- email (string or null): contact email
+- linkedin (string or null): LinkedIn profile URL
 - summary (string): one-sentence professional summary
 - skills (array of strings): technical and professional skills
-- experience (array of objects with role, company, duration, description)
+- tools (array of strings): dev tools, platforms, CLIs (separate from core technical skills)
+- experience (array of objects with role, company, duration, description, projects — projects is an array of objects with name, description, tied to that role if any)
+- key_achievements (array of strings): 3-5 high-level standout accomplishments across the whole CV
 - education (array of objects with degree, institution, year)
-- projects (array of objects with name, description, technologies)
+- languages (array of objects with language, proficiency) — omit/empty if not stated
+- projects (array of objects with name, description, technologies) — standalone projects not tied to a specific role
+
+Only extract what is explicitly present. Use null/empty for anything not stated — never invent contact details, dates, or achievements.
 
 CV text:
 {cv_text[:3000]}
 
 Respond with ONLY a JSON object."""
 
-        text = _call_llm(prompt)
+        text = _call_llm(prompt, max_tokens=2048)
         if text:
             data = _parse_json_from_llm(text)
             if data and "skills" in data:
@@ -185,9 +195,25 @@ Respond with ONLY a JSON object."""
         job_description: str,
         job_role: str,
     ) -> Dict[str, Any]:
-        """Optimize CV content for a specific job, applying resume_editor rules."""
+        """Optimize CV content for a specific job.
+
+        Output follows the cv_professional_template skill
+        (.claude/skills/cv_professional_template/SKILL.md) — header with contact
+        info, unlabeled pitch bullets, PROFESSIONAL SKILLS:, PROFESSIONAL WORK
+        EXPERIENCE: (with Roles & Responsibilities / Projects), KEY ACHIEVEMENTS:,
+        EDUCATION:, and LANGUAGES: (only if present). Both the LLM prompt and the
+        deterministic fallback below must stay in sync with that file.
+        """
+        name = cv_data.get("name") or ""
+        location = cv_data.get("location") or ""
+        phone = cv_data.get("phone") or ""
+        email = cv_data.get("email") or ""
+        linkedin = cv_data.get("linkedin") or ""
         skills_str = ", ".join(cv_data.get("skills", [])[:20])
+        tools_str = ", ".join(cv_data.get("tools", [])[:20])
         summary = cv_data.get("summary", "")
+        key_achievements = cv_data.get("key_achievements", [])[:5]
+        languages = cv_data.get("languages", [])
 
         # Serialise experience / education / projects for the prompt
         experience_lines = []
@@ -197,6 +223,9 @@ Respond with ONLY a JSON object."""
             duration = exp.get("duration", "")
             desc = exp.get("description", "")
             experience_lines.append(f"- {role} at {company} ({duration}): {desc}")
+            for proj in exp.get("projects", []) or []:
+                if isinstance(proj, dict):
+                    experience_lines.append(f"  - project tied to this role: {proj.get('name','')}: {proj.get('description','')}")
         experience_str = "\n".join(experience_lines) or "Not provided"
 
         education_lines = []
@@ -217,49 +246,103 @@ Respond with ONLY a JSON object."""
                 projects_lines.append(f"- {proj}")
         projects_str = "\n".join(projects_lines) or ""
 
-        prompt = f"""You are a professional resume writer. Rewrite the candidate's CV perfectly tailored for the target job. It must read like a human wrote it — a recruiter must not detect AI authorship.
+        header_lines = [name] if name else []
+        if location:
+            header_lines.append(f"Current Location: {location}")
+        contact_bits = []
+        if phone:
+            contact_bits.append(phone)
+        if linkedin:
+            contact_bits.append(f"LinkedIn: {linkedin}")
+        if contact_bits:
+            header_lines.append("Contact: " + " | ".join(contact_bits))
+        if email:
+            header_lines.append(f"Email: {email}")
+        header_str = "\n".join(header_lines) or "Not provided — omit header lines with no data"
+
+        languages_str = "\n".join(
+            f"- {lg.get('language','')}: {lg.get('proficiency','')}" if isinstance(lg, dict) else f"- {lg}"
+            for lg in languages
+        )
+        key_achievements_str = "\n".join(f"- {a}" for a in key_achievements)
+
+        prompt = f"""You are a professional resume writer. Rewrite the candidate's CV perfectly tailored for the target job, following the EXACT structure below. It must read like a human wrote it — a recruiter must not detect AI authorship.
 
 === TAILORING RULES ===
 1. Mirror the job description's exact keywords, tools, and terminology throughout
 2. Rewrite every experience bullet using the job's language — past roles must sound directly relevant
-3. Reorder Skills so the most job-relevant skills appear first
-4. Rewrite the Summary as a natural, conversational pitch mentioning the job title organically
-5. Never invent metrics, titles, or experiences — only reframe what already exists
+3. Reorder Skills/Tools so the most job-relevant items appear first
+4. Write the opening pitch bullets as a natural pitch mentioning the job title organically
+5. Never invent metrics, titles, experiences, or contact details — only reframe what already exists
 
 === ANTI-AI RULES ===
 NEVER use: "Leverage/Spearheaded/Utilize/Additionally/Furthermore/Results-driven/Proven track record/Passionate about/Dedicated to"
-ALWAYS: Mix bullet lengths, vary openers, use rough numbers (~30%, 3-person team), no superlatives
+ALWAYS: Mix bullet lengths, vary openers, use rough numbers (~30%, 3-person team) only if present in input, no superlatives
+
+=== REQUIRED CV STRUCTURE (follow exactly, omit any line/section with no source data — never fabricate) ===
+[Name]
+Current Location: [City, Country]
+Contact: [Phone] | LinkedIn: [linkedin url]
+Email: [email]
+
+- [pitch bullet 1 — no header, 3-5 punchy bullets mixing role, specialization, and proof]
+- [pitch bullet ...]
+
+PROFESSIONAL SKILLS:
+Technical Skills:
+[comma-separated list, most job-relevant first]
+Tools Skills:
+[comma-separated list, most job-relevant first]
+
+PROFESSIONAL WORK EXPERIENCE:
+[Company Name]
+[Title] | [Duration]
+Roles & Responsibilities:
+- bullet
+- bullet
+Projects:
+- **[Project Name]**: [description] (only include if this role actually has projects)
+
+KEY ACHIEVEMENTS:
+- [3-5 high-level bullets distinct from the per-role bullets above]
+
+EDUCATION:
+- [Degree] — [Institution] ([Years])
+
+LANGUAGES:
+- [Language]: [Proficiency]
+(omit this entire section if no languages were provided)
 
 === OUTPUT FORMAT (CRITICAL — follow exactly) ===
 Line 1: SCORE:<integer 0-100>
 Line 2: IMPROVEMENTS:<improvement1>|<improvement2>|<improvement3>
 Line 3: (blank)
-Lines 4+: The complete tailored CV in Markdown with sections: ## Summary, ## Skills, ## Experience, ## Education (and ## Projects if applicable)
-
-Each Experience entry:
-**[Role] — [Company] ([Duration])**
-- bullet
-- bullet
+Lines 4+: The complete tailored CV following the REQUIRED CV STRUCTURE above
 
 === INPUT ===
 Job Role: {job_role}
 Job Description: {job_description[:1200]}
 
-Candidate:
-Summary: {summary}
+Candidate Header:
+{header_str}
+
+Pitch/Summary source: {summary}
 Skills: {skills_str}
+Tools: {tools_str}
 Experience:
 {experience_str}
 Education:
 {education_str}
-{f"Projects:{chr(10)}{projects_str}" if projects_str else ""}"""
+{f"Standalone Projects:{chr(10)}{projects_str}" if projects_str else ""}
+{f"Key Achievements (source):{chr(10)}{key_achievements_str}" if key_achievements_str else ""}
+{f"Languages:{chr(10)}{languages_str}" if languages_str else ""}"""
 
         text = _call_llm(prompt, max_tokens=4096)
         if text:
             lines = text.strip().splitlines()
             score = None
             improvements = []
-            cv_start = 0
+            improvements_idx = None
             for i, line in enumerate(lines):
                 if line.startswith("SCORE:"):
                     try:
@@ -268,9 +351,12 @@ Education:
                         pass
                 elif line.startswith("IMPROVEMENTS:"):
                     improvements = [s.strip() for s in line[len("IMPROVEMENTS:"):].split("|") if s.strip()]
-                elif line.startswith("## "):
-                    cv_start = i
-                    break
+                    improvements_idx = i
+            cv_start = 0
+            if improvements_idx is not None:
+                cv_start = improvements_idx + 1
+                while cv_start < len(lines) and not lines[cv_start].strip():
+                    cv_start += 1
             optimized_content = "\n".join(lines[cv_start:]).strip() if cv_start else ""
             if score is not None and optimized_content:
                 logger.info(f"optimize_cv: LLM optimized full CV for {job_role} (score={score})")
@@ -281,18 +367,47 @@ Education:
                 }
 
         logger.info(f"optimize_cv: using fallback for {job_role}")
-        # Structured fallback — still applies the rules as best we can deterministically
-        fallback_content = (
-            f"## Summary\n"
-            f"Experienced professional with expertise in {skills_str.split(',')[0].strip() if skills_str else 'relevant technologies'}, "
-            f"applying for {job_role}.\n\n"
-            f"## Skills\n"
-            + "\n".join(f"- {s.strip()}" for s in skills_str.split(",") if s.strip()) + "\n\n"
-            f"## Experience\n"
-            f"{experience_str}\n\n"
-            f"## Education\n"
-            f"{education_str}"
+        # Structured fallback — follows cv_professional_template deterministically
+        fallback_sections = []
+        if header_lines:
+            fallback_sections.append("\n".join(header_lines))
+        pitch = summary or (f"{cv_data.get('experience', [{}])[0].get('role','Professional')} applying for {job_role}." if cv_data.get("experience") else f"Professional applying for {job_role}.")
+        fallback_sections.append(f"- {pitch}")
+        if skills_str or tools_str:
+            skills_block = "PROFESSIONAL SKILLS:\n"
+            if skills_str:
+                skills_block += "Technical Skills:\n" + skills_str + "\n"
+            if tools_str:
+                skills_block += "Tools Skills:\n" + tools_str
+            fallback_sections.append(skills_block.strip())
+
+        experience_blocks = []
+        for exp in cv_data.get("experience", [])[:5]:
+            role = exp.get("role", "")
+            company = exp.get("company", "")
+            duration = exp.get("duration", "")
+            desc = exp.get("description", "")
+            block_lines = [company, f"{role} | {duration}", "Roles & Responsibilities:"]
+            desc_bullets = [s.strip() for s in re.split(r"(?<=[.!?])\s+", desc) if s.strip()] or ["Not provided"]
+            block_lines += [f"- {b}" for b in desc_bullets]
+            role_projects = exp.get("projects", []) or []
+            if role_projects:
+                block_lines.append("Projects:")
+                for proj in role_projects:
+                    if isinstance(proj, dict):
+                        block_lines.append(f"- **{proj.get('name','')}**: {proj.get('description','')}")
+            experience_blocks.append("\n".join(block_lines))
+        fallback_sections.append(
+            "PROFESSIONAL WORK EXPERIENCE:\n" + ("\n\n".join(experience_blocks) if experience_blocks else "Not provided")
         )
+
+        if key_achievements_str:
+            fallback_sections.append(f"KEY ACHIEVEMENTS:\n{key_achievements_str}")
+        fallback_sections.append(f"EDUCATION:\n{education_str}")
+        if languages_str:
+            fallback_sections.append(f"LANGUAGES:\n{languages_str}")
+        fallback_content = "\n\n".join(fallback_sections)
+
         return {
             "keyword_match_score": 60,
             "suggested_improvements": [
@@ -557,13 +672,37 @@ Respond with ONLY a JSON object."""
             "docker", "kubernetes", "aws", "azure", "gcp", "git", "linux",
             "machine learning", "deep learning", "tensorflow", "pytorch",
         ]
+        tools_keywords = [
+            "vs code", "vscode", "github", "gitlab", "postman", "figma", "jira",
+            "n8n", "obsidian", "docusaurus", "claude code", "claude cli",
+        ]
         found_skills = [k.title() for k in skills_keywords if k in cv_text.lower()]
+        found_tools = [k.title() for k in tools_keywords if k in cv_text.lower()]
+
+        email_match = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", cv_text)
+        phone_match = re.search(r"\+?\d[\d\s\-()]{8,}\d", cv_text)
+        linkedin_match = re.search(r"(?:linkedin\.com/in/[\w-]+)", cv_text, re.IGNORECASE)
+
+        name = None
+        for ln in lines[:3]:
+            if len(ln) < 50 and not any(c in ln for c in ("@", "http", "+")) and re.match(r"^[A-Za-z][A-Za-z .'-]+$", ln):
+                name = ln
+                break
+
         return {
-            "summary": lines[0] if lines else "Professional with industry experience.",
+            "name": name,
+            "location": None,
+            "phone": phone_match.group() if phone_match else None,
+            "email": email_match.group() if email_match else None,
+            "linkedin": linkedin_match.group() if linkedin_match else None,
+            "summary": lines[1] if len(lines) > 1 else (lines[0] if lines else "Professional with industry experience."),
             "skills": found_skills or ["Communication", "Problem Solving"],
+            "tools": found_tools,
             "experience": [],
+            "key_achievements": [],
             "projects": [],
             "education": [],
+            "languages": [],
         }
 
     def _fallback_generate_email(
