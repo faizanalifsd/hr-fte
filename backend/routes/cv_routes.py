@@ -2,7 +2,10 @@
 CV Version API Routes - expose CV versions (original + AI-tailored) to the frontend.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -11,6 +14,48 @@ from datetime import datetime
 from ..models import CVVersion, Job, Mission, EmailDraft, EmailStatus, get_db
 
 router = APIRouter(prefix="/api/cvversions", tags=["cvversions"])
+
+STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage" / "cvs"
+
+
+class ExtractPdfResponse(BaseModel):
+    text: str
+    file_path: str
+
+
+@router.post("/extract-pdf", response_model=ExtractPdfResponse)
+async def extract_pdf_text(file: UploadFile = File(...)):
+    """
+    Extract plain text from an uploaded PDF resume so the CV parser has
+    something to work with. Previously the frontend accepted PDFs but never
+    extracted their text — see the 2026-07-15 "0 skills, 0 experiences" bug.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    from PyPDF2 import PdfReader
+    from io import BytesIO
+    try:
+        reader = PdfReader(BytesIO(raw))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read PDF: {e}")
+
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="No extractable text found in this PDF (it may be a scanned image) — paste the CV text manually instead",
+        )
+
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    saved_path = STORAGE_DIR / f"{uuid.uuid4().hex}_{file.filename}"
+    saved_path.write_bytes(raw)
+
+    return ExtractPdfResponse(text=text, file_path=str(saved_path))
 
 
 class CVVersionResponse(BaseModel):

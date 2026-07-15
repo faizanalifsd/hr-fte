@@ -11,6 +11,7 @@ import { Textarea } from "./ui/textarea";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Rocket, Upload, AlertCircle, Loader2 } from "lucide-react";
+import { cvVersionApi } from "../lib/api";
 
 interface Props {
   open: boolean;
@@ -26,13 +27,29 @@ const MissionLaunchDialog = ({ open, onClose, onLaunch, isLoading, error }: Prop
   const [missionInput, setMissionInput] = useState(SAMPLE_MISSION);
   const [cvText, setCvText] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
-    if (file.name.toLowerCase().endsWith(".pdf")) return; // PDF accepted silently — user pastes text
+    setExtractError(null);
+
+    if (file.name.toLowerCase().endsWith(".pdf")) {
+      setExtracting(true);
+      try {
+        const { text } = await cvVersionApi.extractPdf(file);
+        setCvText(text);
+      } catch (err) {
+        setExtractError(err instanceof Error ? err.message : "Failed to extract PDF text");
+      } finally {
+        setExtracting(false);
+      }
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       if (typeof ev.target?.result === "string") setCvText(ev.target.result);
@@ -87,11 +104,15 @@ const MissionLaunchDialog = ({ open, onClose, onLaunch, isLoading, error }: Prop
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                disabled={isLoading}
+                disabled={isLoading || extracting}
                 className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors"
               >
-                <Upload className="w-3 h-3" />
-                {fileName ?? "Upload .txt / .pdf"}
+                {extracting ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Upload className="w-3 h-3" />
+                )}
+                {extracting ? "Extracting…" : (fileName ?? "Upload .txt / .pdf")}
               </button>
               <input ref={fileRef} type="file" accept=".txt,.md,.pdf" className="hidden" onChange={handleFile} />
             </div>
@@ -99,13 +120,19 @@ const MissionLaunchDialog = ({ open, onClose, onLaunch, isLoading, error }: Prop
               value={cvText}
               onChange={(e) => setCvText(e.target.value)}
               placeholder="Paste your CV content here..."
-              disabled={isLoading}
+              disabled={isLoading || extracting}
               rows={8}
               className="bg-background/50 border-border/40 text-xs font-mono resize-none"
             />
-            <p className="text-[10px] text-muted-foreground/60">
-              Paste your CV as plain text, or upload a .txt file.
-            </p>
+            {extractError ? (
+              <p className="text-[10px] text-destructive">
+                Couldn't extract text from that PDF: {extractError} — paste the CV text manually instead.
+              </p>
+            ) : (
+              <p className="text-[10px] text-muted-foreground/60">
+                Paste your CV as plain text, or upload a .txt / .pdf file.
+              </p>
+            )}
           </div>
 
           {/* Error */}
@@ -121,7 +148,7 @@ const MissionLaunchDialog = ({ open, onClose, onLaunch, isLoading, error }: Prop
             <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={isLoading} className="text-muted-foreground">
               Cancel
             </Button>
-            <Button type="submit" size="sm" disabled={isLoading || !missionInput.trim() || !cvText.trim()} className="gap-1.5">
+            <Button type="submit" size="sm" disabled={isLoading || extracting || !missionInput.trim() || !cvText.trim()} className="gap-1.5">
               {isLoading ? (
                 <><Loader2 className="w-3.5 h-3.5 animate-spin" />Launching…</>
               ) : (

@@ -3,8 +3,9 @@ import {
   Upload, FileText, MapPin, Briefcase, ToggleLeft, ToggleRight,
   ChevronDown, Bold, Heading1, Heading2, List, Highlighter,
   RotateCcw, Download, CheckCheck, Send, RefreshCw, Mail as MailIcon,
-  Lock, Copy, Star, X, AlertTriangle,
+  Lock, Copy, Star, X, AlertTriangle, Loader2,
 } from "lucide-react";
+import { cvVersionApi } from "../lib/api";
 type PlanPhase = "init" | "editor";
 type CVVersion = "auto" | "edited" | "locked";
 
@@ -44,6 +45,8 @@ const PlanTab = ({ jobs = [], onLaunch, isLoading = false }: PlanTabProps) => {
   const [cvContent, setCvContent] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
   const [selectedJobCV, setSelectedJobCV] = useState<string | null>(null);
   const [showBaseCV, setShowBaseCV] = useState(false);
 
@@ -84,9 +87,24 @@ const PlanTab = ({ jobs = [], onLaunch, isLoading = false }: PlanTabProps) => {
     }));
   };
 
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     setFileName(file.name);
-    if (file.name.toLowerCase().endsWith(".pdf")) return; // PDF accepted silently
+    setExtractError(null);
+
+    if (file.name.toLowerCase().endsWith(".pdf")) {
+      setExtracting(true);
+      try {
+        const { text } = await cvVersionApi.extractPdf(file);
+        setCvContent(text);
+      } catch (err) {
+        setCvContent(null);
+        setExtractError(err instanceof Error ? err.message : "Failed to extract PDF text");
+      } finally {
+        setExtracting(false);
+      }
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result;
@@ -108,12 +126,12 @@ const PlanTab = ({ jobs = [], onLaunch, isLoading = false }: PlanTabProps) => {
   };
 
   const handleActivatePlanning = async () => {
-    if ((!cvContent && !fileName) || !desiredRole.trim() || !onLaunch) return;
+    if (!cvContent?.trim() || !desiredRole.trim() || !onLaunch) return;
     setLaunchError(null);
     const loc = remote ? "Remote" : (location.trim() || "Pakistan");
     const missionInput = `Find me ${experience} ${desiredRole.trim()} jobs in ${loc}`;
     try {
-      await onLaunch(missionInput, cvContent || "");
+      await onLaunch(missionInput, cvContent);
       setPhase("editor");
     } catch (err) {
       setLaunchError(err instanceof Error ? err.message : "Launch failed");
@@ -162,9 +180,17 @@ const PlanTab = ({ jobs = [], onLaunch, isLoading = false }: PlanTabProps) => {
           >
             <input type="file" accept=".txt,.md,.text,.pdf" className="hidden" id="cv-upload" onChange={handleFileSelect} />
             <label htmlFor="cv-upload" className="cursor-pointer">
-              <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
-              {fileName ? (
-                <p className="text-sm text-primary font-medium">{fileName} ✓</p>
+              {extracting ? (
+                <Loader2 className="w-6 h-6 text-muted-foreground mx-auto mb-2 animate-spin" />
+              ) : (
+                <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
+              )}
+              {extracting ? (
+                <p className="text-sm text-muted-foreground">Extracting text from {fileName}…</p>
+              ) : fileName ? (
+                <p className={`text-sm font-medium ${cvContent ? "text-primary" : "text-destructive"}`}>
+                  {fileName} {cvContent ? "✓" : "✗"}
+                </p>
               ) : (
                 <>
                   <p className="text-sm text-foreground">Drop CV here or click to upload</p>
@@ -173,6 +199,11 @@ const PlanTab = ({ jobs = [], onLaunch, isLoading = false }: PlanTabProps) => {
               )}
             </label>
           </div>
+          {extractError && (
+            <p className="text-xs text-destructive text-center">
+              Couldn't extract text from that PDF: {extractError} — try a text-based export instead.
+            </p>
+          )}
 
           <div className="space-y-3">
             <div>
@@ -215,7 +246,7 @@ const PlanTab = ({ jobs = [], onLaunch, isLoading = false }: PlanTabProps) => {
 
           <button
             onClick={handleActivatePlanning}
-            disabled={(!cvContent && !fileName) || !desiredRole.trim() || isLoading}
+            disabled={!cvContent?.trim() || !desiredRole.trim() || isLoading || extracting}
             className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
           >
             {isLoading ? (

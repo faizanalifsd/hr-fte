@@ -36,6 +36,18 @@ const patch = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 const del = (path: string) => request(path, { method: "DELETE" });
 
+// No Content-Type header here — the browser sets the multipart boundary itself.
+async function uploadFile<T>(path: string, file: File): Promise<T> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: formData });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 // ============================================================
 // TYPES
 // ============================================================
@@ -221,6 +233,11 @@ export interface SyncToEmailResult {
   message: string;
 }
 
+export interface ExtractPdfResult {
+  text: string;
+  file_path: string;
+}
+
 export const cvVersionApi = {
   listByMission: (missionId: number) =>
     get<CVVersionItem[]>(`/api/cvversions/mission/${missionId}`),
@@ -231,6 +248,8 @@ export const cvVersionApi = {
     post<CvAiEditResult>(`/api/cvversions/${id}/ai-edit`, { instruction }),
   syncToEmail: (id: number) =>
     post<SyncToEmailResult>(`/api/cvversions/${id}/sync-to-email`),
+  extractPdf: (file: File) =>
+    uploadFile<ExtractPdfResult>(`/api/cvversions/extract-pdf`, file),
 };
 
 // ============================================================
