@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from ..models import EmailDraft, EmailStatus, CVVersion, Job, get_db
-from ..services.orchestrator import ApplicationOrchestrator
+from ..services.orchestrator import ApplicationOrchestrator, RecipientNotConfirmedError
 
 router = APIRouter(prefix="/api/emails", tags=["emails"])
 
@@ -28,6 +28,7 @@ class EmailDraftResponse(BaseModel):
     to_name: Optional[str]
     hr_title: Optional[str]              # Apollo Phase 4C — HR contact job title
     hr_email_confidence: Optional[str]   # Apollo Phase 4C — "verified"|"likely"|"none"
+    recipient_confirmed: bool            # False = to_email is an unverified guess, blocks approval
     status: str
     created_at: datetime
     approved_at: Optional[datetime]
@@ -50,6 +51,7 @@ class EmailEditRequest(BaseModel):
     """Request model for email editing."""
     subject: Optional[str] = None
     body: Optional[str] = None
+    to_email: Optional[str] = None
 
 
 # ============================================================
@@ -81,6 +83,7 @@ def list_pending_emails(
             to_name=e.to_name,
             hr_title=job.hr_title if job else None,
             hr_email_confidence=job.hr_email_confidence if job else None,
+            recipient_confirmed=e.recipient_confirmed,
             status=e.status.value,
             created_at=e.created_at,
             approved_at=e.approved_at
@@ -114,6 +117,7 @@ def get_email_draft(
         to_name=email.to_name,
         hr_title=job.hr_title if job else None,
         hr_email_confidence=job.hr_email_confidence if job else None,
+        recipient_confirmed=email.recipient_confirmed,
         status=email.status.value,
         created_at=email.created_at,
         approved_at=email.approved_at
@@ -163,11 +167,17 @@ def approve_email(
             to_name=email.to_name,
             hr_title=job.hr_title if job else None,
             hr_email_confidence=job.hr_email_confidence if job else None,
+            recipient_confirmed=email.recipient_confirmed,
             status=email.status.value,
             created_at=email.created_at,
             approved_at=email.approved_at
         )
 
+    except RecipientNotConfirmedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -206,6 +216,7 @@ def reject_email(
             to_name=email.to_name,
             hr_title=job.hr_title if job else None,
             hr_email_confidence=job.hr_email_confidence if job else None,
+            recipient_confirmed=email.recipient_confirmed,
             status=email.status.value,
             created_at=email.created_at,
             approved_at=email.approved_at
@@ -249,7 +260,7 @@ def edit_email(
         )
 
     # Edit content
-    email.edit_content(request.subject, request.body)
+    email.edit_content(request.subject, request.body, request.to_email)
     db.commit()
     db.refresh(email)
 
@@ -263,6 +274,7 @@ def edit_email(
         to_name=email.to_name,
         hr_title=job.hr_title if job else None,
         hr_email_confidence=job.hr_email_confidence if job else None,
+        recipient_confirmed=email.recipient_confirmed,
         status=email.status.value,
         created_at=email.created_at,
         approved_at=email.approved_at

@@ -39,6 +39,11 @@ from .mcp.apollo_service import enrich_jobs_with_hr_emails
 logger = logging.getLogger(__name__)
 
 
+class RecipientNotConfirmedError(ValueError):
+    """Raised when approving an email whose recipient is still an unverified guess."""
+    pass
+
+
 class ApplicationOrchestrator:
     """
     Master orchestrator for the 12-phase job application workflow.
@@ -646,9 +651,12 @@ class ApplicationOrchestrator:
                     + tailored_cv.content_markdown.strip()
                 )
 
-            # Build recipient email: real scraped → fallback formula
+            # Build recipient email: real scraped → guessed placeholder.
+            # A guessed address is NEVER treated as confirmed — approve_email()
+            # blocks sending until a human fixes it or a verified/likely match exists.
             company_slug = re.sub(r"[^a-z0-9]", "", job.company.lower())
             recipient_email = job.hr_email or f"jobs@{company_slug}.com"
+            recipient_confirmed = job.hr_email_confidence in ("verified", "likely")
 
             # Create email draft
             email_draft = EmailDraft(
@@ -657,6 +665,7 @@ class ApplicationOrchestrator:
                 body=cover_body,
                 to_email=recipient_email,
                 to_name=job.hr_name,
+                recipient_confirmed=recipient_confirmed,
                 status=EmailStatus.PENDING_APPROVAL
             )
 
@@ -709,6 +718,12 @@ class ApplicationOrchestrator:
 
         if not email_draft:
             raise ValueError(f"Email draft {email_draft_id} not found")
+
+        if not email_draft.recipient_confirmed:
+            raise RecipientNotConfirmedError(
+                f"Cannot approve: recipient '{email_draft.to_email}' is an unverified guess, "
+                "not a real HR email. Edit the To: address to a real one before approving."
+            )
 
         email_draft.approve(approved_by)
 

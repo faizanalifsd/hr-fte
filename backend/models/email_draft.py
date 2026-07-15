@@ -2,7 +2,7 @@
 EmailDraft Model - Represents generated email drafts awaiting approval.
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Enum, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -46,6 +46,12 @@ class EmailDraft(Base):
     to_name = Column(String(255), nullable=True)
     cc_emails = Column(String(500), nullable=True)  # Comma-separated
 
+    # True once the recipient is known-good: either the HR waterfall found a
+    # verified/likely match, or the user manually corrected an unverified guess.
+    # Sending is blocked at approval time until this is true — see
+    # ApplicationOrchestrator.approve_email().
+    recipient_confirmed = Column(Boolean, default=False, nullable=False)
+
     # Status
     status = Column(
         Enum(EmailStatus),
@@ -86,7 +92,7 @@ class EmailDraft(Base):
         self.status = EmailStatus.REJECTED
         self.rejected_reason = reason
 
-    def edit_content(self, new_subject: str = None, new_body: str = None):
+    def edit_content(self, new_subject: str = None, new_body: str = None, new_to_email: str = None):
         """Edit email content and track changes."""
         if self.edit_count == 0:
             # Save original on first edit
@@ -97,6 +103,9 @@ class EmailDraft(Base):
             self.subject = new_subject
         if new_body:
             self.body = new_body
+        if new_to_email and new_to_email.strip() and new_to_email.strip() != self.to_email:
+            self.to_email = new_to_email.strip()
+            self.recipient_confirmed = True
 
         self.edit_count += 1
         self.updated_at = datetime.utcnow()

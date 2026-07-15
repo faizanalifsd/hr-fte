@@ -22,7 +22,7 @@ import time
 import logging
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urlparse
 
 try:
@@ -44,6 +44,10 @@ HR_ROLES = [
     "hr", "human resources", "recruiter", "recruiting", "talent acquisition",
     "talent", "people", "hiring", "careers", "staffing", "workforce",
 ]
+
+# HR-prefixed local-parts, used to rank bare email addresses when no
+# position/title metadata is available (e.g. Snov's v2 domain-emails endpoint).
+_HR_LOCALS = ["hr", "careers", "recruit", "hiring", "talent", "jobs", "people"]
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 
@@ -131,6 +135,82 @@ def _resolve_domain(company_name: str) -> Optional[str]:
                 return domain
     except Exception as e:
         logger.warning(f"[DomainResolve] Error: {e}")
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
+# DOMAIN GUESSER — free, keyless fallback when Hunter can't resolve
+# (no key, quota exhausted, or company not in its index)
+# ─────────────────────────────────────────────────────────────
+
+# Legal-entity / job-board noise words stripped from the END of a company
+# name only, one at a time, to progressively surface the likely brand name.
+# Multi-word entries must come before their single-word components.
+_COMPANY_SUFFIXES = [
+    "pvt ltd", "pvt. ltd.", "private limited", "pte ltd",
+    "careers", "recruitment", "hiring",
+    "limited", "ltd", "llc", "llp", "inc", "incorporated",
+    "corporation", "corp", "company", "co",
+    "holdings", "group", "technologies", "technology",
+    "solutions", "systems", "international", "enterprises",
+]
+
+
+def _company_name_candidates(company_name: str) -> List[str]:
+    """Progressively strip trailing suffix words, most-stripped candidate first."""
+    name = re.sub(r"[^\w\s&-]", "", company_name or "").strip()
+    words = name.split()
+    candidates: List[str] = []
+
+    while words:
+        candidate = " ".join(words)
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+        two_word = " ".join(words[-2:]).lower() if len(words) >= 2 else ""
+        one_word = words[-1].lower().strip(".")
+
+        if two_word in _COMPANY_SUFFIXES:
+            words = words[:-2]
+        elif one_word in _COMPANY_SUFFIXES:
+            words = words[:-1]
+        else:
+            break
+
+    # Most-stripped (shortest / likely core brand) first
+    return list(reversed(candidates))
+
+
+def _domain_reachable(domain: str) -> bool:
+    """True if the domain resolves and responds to HTTP at all (any status)."""
+    try:
+        requests.head(f"https://{domain}", headers=_BROWSER_HEADERS, timeout=5, allow_redirects=True)
+        return True
+    except Exception:
+        return False
+
+
+def _guess_domain(company_name: str) -> Optional[str]:
+    """
+    Free, keyless domain guesser: strips legal/job-board suffixes off the
+    company name, slugifies what's left, and verifies candidates against
+    common TLDs with a live HTTP check. Best-effort — only used when Hunter's
+    domain-search isn't available or didn't find anything.
+    """
+    if not company_name:
+        return None
+
+    for candidate in _company_name_candidates(company_name):
+        slug = re.sub(r"[^a-z0-9]", "", candidate.lower())
+        if not slug:
+            continue
+        for tld in ("com", "co", "io"):
+            domain = f"{slug}.{tld}"
+            if _domain_reachable(domain):
+                logger.info(f"[DomainGuess] '{company_name}' → {domain} (via '{candidate}')")
+                return domain
+
+    logger.info(f"[DomainGuess] No reachable domain guessed for '{company_name}'")
     return None
 
 
@@ -295,6 +375,15 @@ def _get_snov_token() -> Optional[str]:
 
 
 def _find_via_snov(company_name: str, domain: Optional[str]) -> Optional[dict]:
+    """
+    Uses Snov's v2 async domain-emails search:
+      POST /v2/domain-search/domain-emails/start  → {meta: {task_hash}}
+      GET  /v2/domain-search/domain-emails/result/{task_hash} → polled until status == "completed"
+
+    Note: v2 only returns bare email addresses (no name/position/verification),
+    unlike the deprecated v1 /get-domain-emails endpoint this replaced. Results
+    are therefore ranked by HR-prefixed local-part and marked "likely" (unverified).
+    """
     if not SNOV_CLIENT_ID or not SNOV_CLIENT_SECRET:
         logger.debug("[Snov] Credentials not set — skipping")
         return None
@@ -308,20 +397,35 @@ def _find_via_snov(company_name: str, domain: Optional[str]) -> Optional[dict]:
     if not token:
         return None
 
+    headers = {"Authorization": f"Bearer {token}"}
+
     try:
-        resp = requests.get(
-            "https://api.snov.io/v1/get-domain-emails",
-            params={
-                "domain":       domain,
-                "type":         "all",
-                "limit":        10,
-                "lastId":       0,
-                "access_token": token,
-            },
+        resp = requests.post(
+            "https://api.snov.io/v2/domain-search/domain-emails/start",
+            json={"domain": domain},
+            headers=headers,
             timeout=15,
         )
         resp.raise_for_status()
-        emails_list = resp.json().get("emails", [])
+        task_hash = resp.json().get("meta", {}).get("task_hash")
+        if not task_hash:
+            logger.info("[Snov] No task_hash returned")
+            return None
+
+        result_url = f"https://api.snov.io/v2/domain-search/domain-emails/result/{task_hash}"
+
+        emails_list = []
+        for _ in range(6):
+            time.sleep(1.5)
+            poll_resp = requests.get(result_url, headers=headers, timeout=15)
+            poll_resp.raise_for_status()
+            poll_data = poll_resp.json()
+            if poll_data.get("status") == "completed":
+                emails_list = poll_data.get("data", [])
+                break
+        else:
+            logger.info("[Snov] Timed out waiting for domain search result")
+            return None
 
         if not emails_list:
             logger.info("[Snov] No emails found")
@@ -329,21 +433,21 @@ def _find_via_snov(company_name: str, domain: Optional[str]) -> Optional[dict]:
 
         ranked = sorted(
             emails_list,
-            key=lambda e: _hr_score(e.get("position") or ""),
+            key=lambda e: next(
+                (len(_HR_LOCALS) - i for i, p in enumerate(_HR_LOCALS) if (e.get("email") or "").lower().startswith(p)),
+                -1,
+            ),
             reverse=True,
         )
 
         for entry in ranked:
             email = entry.get("email")
             if email and _is_valid_email(email):
-                name = f"{entry.get('firstName', '')} {entry.get('lastName', '')}".strip() or None
-                logger.info(f"[Snov] ✅ {email} ({entry.get('position', '?')})")
+                logger.info(f"[Snov] ✅ {email}")
                 return _build_contact(
                     email=email,
-                    name=name,
-                    title=entry.get("position"),
                     source="snov_domain_search",
-                    confidence="verified",
+                    confidence="likely",  # v2 endpoint returns unverified emails
                 )
 
     except requests.HTTPError as e:
@@ -372,9 +476,6 @@ def _find_via_website_scrape(domain: Optional[str]) -> Optional[dict]:
         f"https://{domain}/contact",
         f"https://{domain}/careers",
     ]
-
-    # HR-prefixed emails get priority
-    _HR_LOCALS = ["hr", "careers", "recruit", "hiring", "talent", "jobs", "people"]
 
     for url in pages:
         try:
@@ -439,6 +540,8 @@ def find_hr_email(company_name: str, company_domain: Optional[str] = None) -> di
     domain = company_domain
     if not domain:
         domain = _resolve_domain(company_name)
+    if not domain:
+        domain = _guess_domain(company_name)
 
     logger.info(f"[Waterfall] '{company_name}' | domain={domain}")
 

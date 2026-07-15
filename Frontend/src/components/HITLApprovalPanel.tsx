@@ -24,6 +24,7 @@ const HITLApprovalPanel = ({ onApprovalComplete }: Props) => {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editSubject, setEditSubject] = useState("");
   const [editBody, setEditBody] = useState("");
+  const [editToEmail, setEditToEmail] = useState("");
   const [actioning, setActioning] = useState<number | null>(null);
   const [approvedCount, setApprovedCount] = useState(0);
 
@@ -76,12 +77,13 @@ const HITLApprovalPanel = ({ onApprovalComplete }: Props) => {
     setEditingId(email.id);
     setEditSubject(email.subject);
     setEditBody(email.body);
+    setEditToEmail(email.to_email);
   };
 
   const handleSaveEdit = async (id: number) => {
     setActioning(id);
     try {
-      const updated = await emailApi.edit(id, editSubject, editBody);
+      const updated = await emailApi.edit(id, editSubject, editBody, editToEmail);
       setPendingEmails((prev) => prev.map((e) => (e.id === id ? updated : e)));
       setEditingId(null);
     } catch (err) {
@@ -181,6 +183,20 @@ const HITLApprovalPanel = ({ onApprovalComplete }: Props) => {
                   {isEditing ? (
                     <div className="space-y-2">
                       <input
+                        type="email"
+                        value={editToEmail}
+                        onChange={(e) => setEditToEmail(e.target.value)}
+                        className={`w-full text-xs bg-background/50 border rounded px-2 py-1.5 text-foreground font-mono ${
+                          email.recipient_confirmed ? "border-border/40" : "border-destructive/50"
+                        }`}
+                        placeholder="To: recipient email"
+                      />
+                      {!email.recipient_confirmed && (
+                        <p className="text-[10px] text-destructive">
+                          This address is a guess, not a verified HR email — confirm the real one before you can approve.
+                        </p>
+                      )}
+                      <input
                         type="text"
                         value={editSubject}
                         onChange={(e) => setEditSubject(e.target.value)}
@@ -225,9 +241,14 @@ const HITLApprovalPanel = ({ onApprovalComplete }: Props) => {
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
-                    onClick={() => handleApprove(email.id)}
+                    onClick={() => (email.recipient_confirmed ? handleApprove(email.id) : startEdit(email))}
                     disabled={isActioning}
-                    className="gap-1 h-7 text-[10px] bg-success/20 text-success border border-success/30 hover:bg-success/30"
+                    title={email.recipient_confirmed ? undefined : "Recipient is an unverified guess — fix the To: address first"}
+                    className={`gap-1 h-7 text-[10px] border ${
+                      email.recipient_confirmed
+                        ? "bg-success/20 text-success border-success/30 hover:bg-success/30"
+                        : "bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20"
+                    }`}
                     variant="outline"
                   >
                     {isActioning ? (
@@ -235,7 +256,7 @@ const HITLApprovalPanel = ({ onApprovalComplete }: Props) => {
                     ) : (
                       <CheckCircle2 className="w-3 h-3" />
                     )}
-                    Approve & Send
+                    {email.recipient_confirmed ? "Approve & Send" : "Fix recipient to approve"}
                   </Button>
                   <Button
                     size="sm"
