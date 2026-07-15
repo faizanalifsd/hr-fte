@@ -344,22 +344,27 @@ class ApplicationOrchestrator:
     # PHASE 5: JOB MATCHING
     # ============================================================
 
+    # Minimum score a job must earn to be considered a genuine fit for this
+    # candidate. Below this, no amount of CV tailoring should be sent for it —
+    # see the 2026-07-15 discussion on not fabricating fit for unrelated jobs.
+    MIN_RELEVANCE_SCORE = 40
+
     def match_jobs(self, mission_id: int, cv_data: Dict) -> List[Job]:
         """
-        Phase 5: Matching (Ollama).
+        Phase 5: Matching.
 
-        As per execution_plan.md Phase 5:
-        - Ollama calculates match scores
-        - Claude validates output
-        - Update Job.match_score in DB
-        - Select top N jobs
+        Scores every scraped job against the candidate's real skills/experience
+        and selects up to 5 of the genuinely best-fitting ones (fewer if fewer
+        than 5 clear the relevance bar) — CVs only get tailored for jobs a
+        candidate could honestly apply to. Previously this picked 5 random
+        jobs and stamped every one as a 90% match; see match_jobs history.
 
         Args:
             mission_id: Mission ID
             cv_data: Parsed CV data
 
         Returns:
-            List of matched jobs
+            List of selected jobs, best match first
         """
         logger.info("=== PHASE 5: JOB MATCHING ===")
 
@@ -368,25 +373,33 @@ class ApplicationOrchestrator:
             Job.status == JobStatus.SCRAPED
         ).all()
 
-        # Log phase start
         AuditLog.log_action(
             self.db,
             mission_id=mission_id,
             agent_name="job_matcher",
             action_type=ActionType.AGENT_INVOKED,
             status="Running",
-            output_summary=f"Phase 5: Selecting 5 random jobs from {len(jobs)} scraped — CV will be tailored to each"
+            output_summary=f"Phase 5: Scoring {len(jobs)} scraped jobs against candidate skills"
         )
 
-        import random
-        selected = random.sample(jobs, min(5, len(jobs)))
+        scored = []
+        for job in jobs:
+            result = self.ollama.score_job_match(cv_data, job.role, job.description)
+            scored.append((job, result))
 
-        for job in selected:
-            job.match_score = 90
-            job.matched_skills = json.dumps(cv_data.get("skills", [])[:6])
-            job.missing_skills = json.dumps([])
-            job.experience_alignment = "high"
+        # Best match first; only jobs clearing the relevance bar are eligible
+        scored.sort(key=lambda pair: pair[1]["match_score"], reverse=True)
+        eligible = [(job, r) for job, r in scored if r["match_score"] >= self.MIN_RELEVANCE_SCORE]
+        chosen = eligible[:5]
+
+        selected: List[Job] = []
+        for job, result in chosen:
+            job.match_score = result["match_score"]
+            job.matched_skills = json.dumps(result.get("matched_skills", []))
+            job.missing_skills = json.dumps(result.get("missing_skills", []))
+            job.experience_alignment = result.get("experience_alignment", "low")
             job.status = JobStatus.SELECTED
+            selected.append(job)
 
             AuditLog.log_action(
                 self.db,
@@ -395,18 +408,34 @@ class ApplicationOrchestrator:
                 agent_name="job_matcher",
                 action_type=ActionType.JOB_MATCHED,
                 status="Success",
-                output_summary=f"Selected: {job.role} at {job.company} — CV will be tailored to fit"
+                output_summary=f"Selected: {job.role} at {job.company} — {result['match_score']}% match"
             )
 
-        # Mark remaining jobs as matched (not selected)
+        # Everything else (scored below the bar, or not selected among eligible) → matched-but-not-selected
         selected_ids = {j.id for j in selected}
-        for job in jobs:
+        for job, result in scored:
             if job.id not in selected_ids:
+                job.match_score = result["match_score"]
+                job.matched_skills = json.dumps(result.get("matched_skills", []))
+                job.missing_skills = json.dumps(result.get("missing_skills", []))
+                job.experience_alignment = result.get("experience_alignment", "low")
                 job.status = JobStatus.MATCHED
 
         self.db.commit()
 
-        logger.info(f"Selected {len(selected)} random jobs for CV tailoring")
+        AuditLog.log_action(
+            self.db,
+            mission_id=mission_id,
+            agent_name="job_matcher",
+            action_type=ActionType.AGENT_INVOKED,
+            status="Success",
+            output_summary=(
+                f"Phase 5 complete: {len(selected)}/{len(jobs)} jobs cleared the "
+                f"{self.MIN_RELEVANCE_SCORE}% relevance bar and were selected"
+            )
+        )
+
+        logger.info(f"Selected {len(selected)}/{len(jobs)} genuinely-matched jobs for CV tailoring")
         return selected
 
     # ============================================================
@@ -1040,15 +1069,16 @@ class ApplicationOrchestrator:
             # Phase 4: Scrape jobs
             jobs = self.scrape_jobs(mission_id, max_results=20)
 
-            # Phase 5: Random pick 5 jobs
+            # Phase 5: Score every scraped job against the CV, select up to 5 genuine matches
             matched_jobs = self.match_jobs(mission_id, cv_data)
 
-            # Phase 4B/4C: Enrich the 5 selected jobs with real HR emails (Apollo.io)
+            # Phase 4B/4C: Enrich the selected jobs with real HR emails (Apollo.io)
             matched_jobs = self.enrich_hr_emails(mission_id, matched_jobs)
 
-            # Phase 6-7: For each of the 5 randomly selected jobs only
+            # Phase 6-7: One CV + email per selected job (may be fewer than 5 if
+            # fewer jobs cleared the relevance bar in Phase 5)
             pending_approvals = []
-            top_jobs = matched_jobs[:5]  # Hard cap at 5 — matches Phase 5 selection
+            top_jobs = matched_jobs[:5]  # match_jobs() already caps at 5 — safety net only
 
             AuditLog.log_action(
                 self.db,

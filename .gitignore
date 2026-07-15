@@ -80,13 +80,13 @@ ENV/
 # STORAGE & UPLOADS
 # =============================================================================
 
-# CV storage
-storage/cvs/*
-!storage/cvs/.gitkeep
+# CV storage (real path is backend/storage/cvs/ — match at any depth)
+**/storage/cvs/*
+!**/storage/cvs/.gitkeep
 
 # Generated outputs
-storage/output/*
-!storage/output/.gitkeep
+**/storage/output/*
+!**/storage/output/.gitkeep
 
 # Uploaded files
 uploads/*

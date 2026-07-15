@@ -175,7 +175,7 @@ Respond with ONLY a JSON object, no explanation."""
 Only extract what is explicitly present. Use null/empty for anything not stated — never invent contact details, dates, or achievements.
 
 CV text:
-{cv_text[:3000]}
+{cv_text[:8000]}
 
 Respond with ONLY a JSON object."""
 
@@ -188,6 +188,80 @@ Respond with ONLY a JSON object."""
 
         logger.info("parse_cv: using rule-based fallback")
         return self._fallback_parse_cv(cv_text)
+
+    def score_job_match(
+        self,
+        cv_data: Dict,
+        job_role: str,
+        job_description: str,
+    ) -> Dict[str, Any]:
+        """
+        Score how well a candidate's real skills/experience fit a specific job.
+        Used by Phase 5 job selection so only genuinely relevant jobs get a
+        tailored CV — replaces the old random.sample() placeholder.
+        """
+        skills = cv_data.get("skills", []) + cv_data.get("tools", [])
+        skills_str = ", ".join(skills[:25]) or "Not provided"
+        experience_lines = []
+        for exp in cv_data.get("experience", [])[:5]:
+            role = exp.get("role", "")
+            desc = exp.get("description", "")
+            experience_lines.append(f"- {role}: {desc}")
+        experience_str = "\n".join(experience_lines) or "Not provided"
+
+        prompt = f"""Score how well this candidate's REAL skills and experience match the job below. Be honest and strict — this determines whether their CV even gets tailored for this job, so don't inflate the score for a poor fit.
+
+Candidate Skills: {skills_str}
+Candidate Experience:
+{experience_str}
+
+Job Role: {job_role}
+Job Description: {job_description[:1200]}
+
+Return a JSON object with:
+- match_score (integer 0-100): overall fit based on real overlap between candidate skills/experience and job requirements
+- matched_skills (array of strings): candidate skills that genuinely apply to this job
+- missing_skills (array of strings): job requirements the candidate does not have
+- experience_alignment (string): "high", "medium", or "low"
+
+Respond with ONLY a JSON object."""
+
+        text = _call_llm(prompt, max_tokens=512)
+        if text:
+            data = _parse_json_from_llm(text)
+            if data and "match_score" in data:
+                try:
+                    data["match_score"] = max(0, min(int(data["match_score"]), 100))
+                    data.setdefault("matched_skills", [])
+                    data.setdefault("missing_skills", [])
+                    data.setdefault("experience_alignment", "low")
+                    return data
+                except (ValueError, TypeError):
+                    pass
+
+        logger.info(f"score_job_match: using rule-based fallback for '{job_role}'")
+        return self._fallback_score_job_match(skills, job_role, job_description)
+
+    def _fallback_score_job_match(
+        self,
+        candidate_skills: List[str],
+        job_role: str,
+        job_description: str,
+    ) -> Dict[str, Any]:
+        """Deterministic keyword-overlap scoring — no LLM required."""
+        haystack = f"{job_role} {job_description}".lower()
+        matched = [s for s in candidate_skills if s.lower() in haystack]
+        missing: List[str] = []  # can't know real job requirements without an LLM read
+        skill_count = len(candidate_skills) or 1
+        overlap_ratio = len(matched) / skill_count
+        match_score = min(int(overlap_ratio * 100), 100)
+        alignment = "high" if match_score >= 60 else "medium" if match_score >= 30 else "low"
+        return {
+            "match_score": match_score,
+            "matched_skills": matched,
+            "missing_skills": missing,
+            "experience_alignment": alignment,
+        }
 
     def optimize_cv(
         self,
@@ -308,10 +382,11 @@ KEY ACHIEVEMENTS:
 
 EDUCATION:
 - [Degree] — [Institution] ([Years])
+(omit this entire section — heading included — if no education was provided; NEVER write a placeholder like "No education information provided")
 
 LANGUAGES:
 - [Language]: [Proficiency]
-(omit this entire section if no languages were provided)
+(omit this entire section — heading included — if no languages were provided; NEVER write a placeholder like "No language information provided")
 
 === OUTPUT FORMAT (CRITICAL — follow exactly) ===
 Line 1: SCORE:<integer 0-100>
@@ -403,7 +478,8 @@ Education:
 
         if key_achievements_str:
             fallback_sections.append(f"KEY ACHIEVEMENTS:\n{key_achievements_str}")
-        fallback_sections.append(f"EDUCATION:\n{education_str}")
+        if education_lines:
+            fallback_sections.append(f"EDUCATION:\n{education_str}")
         if languages_str:
             fallback_sections.append(f"LANGUAGES:\n{languages_str}")
         fallback_content = "\n\n".join(fallback_sections)
