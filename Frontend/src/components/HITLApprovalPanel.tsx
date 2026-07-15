@@ -75,6 +75,7 @@ const HITLApprovalPanel = ({ onApprovalComplete }: Props) => {
 
   const startEdit = (email: EmailDraft) => {
     setEditingId(email.id);
+    setExpandedId(email.id);
     setEditSubject(email.subject);
     setEditBody(email.body);
     setEditToEmail(email.to_email);
