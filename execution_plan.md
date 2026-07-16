@@ -1,30 +1,33 @@
 # DIGITAL FTE EXECUTION PLAN
-Version: 4.1 (OpenRouter Primary + Groq Fallback)
+Version: 4.2 (Groq Primary + OpenRouter Fallback)
+Last Updated: 2026-07-16
 Architecture: LLM Sub-Agents + MCP + MySQL Persistence
 
 ---
 
 ## ARCHITECTURE OVERVIEW
 
-1. **AI Sub-Agents** → OpenRouter (primary) → Groq (fallback) → Rule-based (final fallback)
-2. **MCP Layer** → Secure External Tool Connectors (Apify, Gmail)
+1. **AI Sub-Agents** → Groq (primary) → OpenRouter (fallback) → Rule-based (final fallback)
+2. **MCP Layer** → Secure External Tool Connectors (Apify for job scraping, Anymail Finder/Hunter.io/Snov.io/website-scrape waterfall for HR email discovery, Gmail for sending)
 3. **MySQL** → Persistent Storage Layer
 
 ### LLM Provider Strategy:
 
-| Priority | Provider     | Model                                 | Use Case                         |
-|----------|--------------|---------------------------------------|----------------------------------|
-| 1        | OpenRouter   | meta-llama/llama-3.1-8b-instruct:free | All AI tasks (200+ models)       |
-| 2        | Groq         | llama-3.3-70b-versatile               | Fallback (ultra-fast inference)  |
-| 3        | Rule-based   | Deterministic logic                   | Final fallback (no API required) |
+| Priority | Provider     | Model                                     | Use Case                                |
+|----------|--------------|--------------------------------------------|-------------------------------------------|
+| 1        | Groq         | llama-3.3-70b-versatile                    | All AI tasks (fast, reliable free tier)   |
+| 2        | OpenRouter   | meta-llama/llama-3.3-70b-instruct:free     | Fallback (used when Groq unavailable)     |
+| 3        | Rule-based   | Deterministic logic                        | Final fallback (no API required)          |
+
+Groq is primary because the OpenRouter free tier is frequently rate-limited; Groq's free tier has proven more reliable in practice.
 
 ### Role Assignment:
 
 **AI Sub-Agents (backend/services/ai/llm_service.py):**
 - Mission parsing
-- CV parsing & optimization
+- CV parsing & optimization (contact info, skills, tools, experience, key achievements, education, languages)
+- Job relevance scoring (`score_job_match`)
 - Email generation
-- Job matching & scoring
 - Evidence generation
 - Resume editing
 - Email validation
@@ -63,23 +66,34 @@ DATABASE_URL=<connection_string>
 **AI Provider Configuration (at least one required):**
 
 ```env
-# OpenRouter — Primary LLM provider (200+ models, free tier available)
-# Models: meta-llama/llama-3.1-8b-instruct:free, google/gemma-2-9b-it:free
-OPENROUTER_API_KEY=<secure_key>
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-
-# Groq — Fallback LLM provider (ultra-fast free tier)
+# Groq — Primary LLM provider (ultra-fast, reliable free tier)
 # Models: llama-3.3-70b-versatile, llama-3.1-8b-instant, mixtral-8x7b-32768
 GROQ_API_KEY=<secure_key>
 GROQ_BASE_URL=https://api.groq.com/openai/v1
+
+# OpenRouter — Fallback LLM provider (200+ models, free tier available)
+# Models: meta-llama/llama-3.3-70b-instruct:free
+OPENROUTER_API_KEY=<secure_key>
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
+
+**HR Email Discovery Providers (optional, waterfall — used in Phase 4b):**
+
+```env
+ANYMAILFINDER_API_KEY=<secure_key>
+HUNTER_API_KEY=<secure_key>
+SNOV_CLIENT_ID=<secure_key>
+SNOV_CLIENT_SECRET=<secure_key>
+```
+
+If none are configured, or all fail for a given company, the system falls back to a free domain guesser + website scrape — never to a fabricated address. Confidence is recorded per lookup (`verified` / `likely` / none) and gates HITL approval (see constitution.md §3.5).
 
 ### Rules:
 
 - No API keys stored in source code
 - No API keys stored in database
 - All keys loaded at runtime via os.getenv()
-- System degrades gracefully: OpenRouter → Groq → Rule-based
+- System degrades gracefully: Groq → OpenRouter → Rule-based
 - If all providers fail → rule-based fallback ensures continuity
 - .env file is excluded from version control via .gitignore
 
@@ -127,9 +141,14 @@ DB_NAME=job_application_db
 
 ## PHASE 3 – CV PARSING
 
-**AI Sub-Agent (Groq/OpenRouter)** extracts structured data:
-- Skills, experience, projects, education, keywords
+**AI Sub-Agent (Groq/OpenRouter)** extracts structured data from the full CV text (up to 8000 chars — enough to cover education/languages sections near the end of longer resumes):
+- Contact info: name, location, phone, email, linkedin
+- Summary, skills, tools
+- Experience (with role-tied projects), key achievements
+- Education, languages, projects
 - Returns structured JSON
+
+If no LLM is reachable, `_fallback_parse_cv()` regex-extracts email/phone/linkedin/name so the pipeline never produces an empty profile.
 
 **Backend:** Stores in CVVersion table, logs to AuditLog
 
@@ -151,27 +170,41 @@ Retry up to 3 times with exponential backoff.
 
 ---
 
+## PHASE 4b – HR EMAIL DISCOVERY
+
+**Flow:** Backend → `apollo_service.find_hr_email()` waterfall
+
+1. Resolve company domain (Hunter domain search, or free `_guess_domain()` candidate/TLD guesser if that fails)
+2. Try in order until one succeeds: **Anymail Finder → Hunter.io → Snov.io (v2 async: start + poll) → website scrape**
+3. Record `hr_email_confidence` on the Job: `verified` (Anymail/Hunter with verification), `likely` (Snov/scrape or HR-prefixed local-part match), or none
+4. Never fabricate an address (e.g. guessed `jobs@company.com`) — if the waterfall finds nothing, the job proceeds with no confirmed recipient and email approval is blocked (constitution.md §3.5) until the user supplies/edits a real one.
+
+---
+
 ## PHASE 5 – JOB MATCHING
 
-**AI Sub-Agent (Groq/OpenRouter)** scores jobs:
-- Skills match: 40%
-- Experience relevance: 30%
-- Tech stack overlap: 20%
-- Role alignment: 10%
+**AI Sub-Agent (Groq/OpenRouter)** scores every scraped job against the parsed CV via `score_job_match()`:
+- Returns `match_score` (0-100), `matched_skills`, `missing_skills`, `experience_alignment`
+- Deterministic keyword-overlap fallback (`_fallback_score_job_match`) when no LLM is reachable
 
-**Backend threshold logic:**
-- Score >= 80: Apply
-- Score 60-79: Optimize First
-- Score < 60: Skip
+**Backend selection logic (`orchestrator.match_jobs`, `MIN_RELEVANCE_SCORE = 40`):**
+- Jobs are scored, then sorted by score descending
+- Up to 5 jobs clearing the 40% relevance bar are selected (fewer if fewer qualify — the mission never force-selects irrelevant jobs just to hit a count)
+- Jobs below the bar, or not selected among ties, are recorded as `Matched` (seen, not pursued) with their real score — never randomly chosen
+
+This replaced an earlier version that randomly sampled 5 jobs regardless of fit (see constitution.md §9.5 — relevance gating is now a governance rule, not just an implementation detail).
 
 ---
 
 ## PHASE 6 – CV VERSIONING
 
-**AI Sub-Agent (Groq/OpenRouter)** optimizes CV per job:
-- Extract keywords from description
-- Suggest improvements (no fabrication)
-- Return optimized content
+**AI Sub-Agent (Groq/OpenRouter)** optimizes CV per job, enforcing the canonical professional structure (see `.claude/skills/cv_professional_template/SKILL.md`):
+- Header (name + contact info), unlabeled pitch bullets
+- PROFESSIONAL SKILLS (Technical/Tools split)
+- PROFESSIONAL WORK EXPERIENCE (Roles & Responsibilities / Projects)
+- KEY ACHIEVEMENTS
+- EDUCATION, LANGUAGES — included when present in the parsed CV, entire section omitted (not printed as "Not provided") when absent
+- Rearranges/emphasizes existing content only — never fabricates skills or experience to force a fit (constitution.md §9.6)
 
 **Backend:** Stores in CVVersion table
 
@@ -184,18 +217,18 @@ Retry up to 3 times with exponential backoff.
 - Personalized to role/company
 - Returns subject + body
 
-**Backend:** Stores in EmailDraft table, sets status = PendingApproval
+**Backend:** Stores in EmailDraft table, sets status = PendingApproval, sets `recipient_confirmed = True` only if `hr_email_confidence` is `verified` or `likely` (see Phase 4b)
 
 ---
 
 ## PHASE 8 – HUMAN APPROVAL (HITL)
 
 User actions via frontend:
-- **Approve** → EmailDraft.status = Approved
-- **Edit** → Modify, track edit_count
+- **Approve** → EmailDraft.status = Approved (blocked with `RecipientNotConfirmedError` / HTTP 400 if `recipient_confirmed` is false — user must fix the recipient first)
+- **Edit** → Modify content and/or `to_email`; editing `to_email` sets `recipient_confirmed = True`
 - **Reject** → EmailDraft.status = Rejected, log reason
 
-As per constitution.md §3: No email sent without explicit human approval.
+As per constitution.md §3: No email sent without explicit human approval, and no approval without a confirmed real recipient (§3.5).
 
 ---
 
@@ -264,11 +297,11 @@ remaining = min(target - progress, limit - applications_today)
 - Single job failure: log, continue with rest
 - Retry policy: max 3 attempts, backoff 2s/4s/8s
 - Critical failures: DB loss, MCP auth failure, missing required env var
-- LLM failure: OpenRouter → Groq → rule-based (never blocks pipeline)
+- LLM failure: Groq → OpenRouter → rule-based (never blocks pipeline)
 
 ---
 
 END OF EXECUTION PLAN
 
-**Last Updated:** 2026-03-02 — OpenRouter primary, Groq fallback, no Anthropic key
-**Version:** 4.1
+**Last Updated:** 2026-07-16 — Groq primary/OpenRouter fallback (corrected to match runtime), real relevance-scored job matching (Phase 5), HR email discovery waterfall + recipient-confirmation gate (Phase 4b/7/8), CV parsing/versioning now covers education/languages/contact info
+**Version:** 4.2

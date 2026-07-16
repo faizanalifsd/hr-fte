@@ -1,7 +1,8 @@
 # DIGITAL FTE CONSTITUTION
-Version: 1.0
+Version: 1.1
 System: Mission-Driven Autonomous Job Application Agent
 Owner: Faizan Ali
+Last Updated: 2026-07-16 — added recipient-confirmation gate (§3.5) and relevance-gated job selection / anti-fabrication rules (§9.5, §9.6)
 
 ---
 
@@ -52,10 +53,16 @@ All behavior must align with:
 
 3.3 User must be able to:
 - Approve
-- Edit
+- Edit (including the recipient email address)
 - Reject
 
 3.4 Rejected items must be logged.
+
+3.5 No email may be approved for a recipient that has not been confirmed as real.
+- Every EmailDraft carries a `recipient_confirmed` flag.
+- It is auto-set true only when the HR email was found with `verified` or `likely` confidence (real lookup, not a guessed/fabricated address).
+- If not confirmed, approval is blocked (`RecipientNotConfirmedError`) until the user edits the recipient address themselves, which confirms it.
+- This exists specifically to prevent sending real outreach emails to fabricated addresses (e.g. guessed `jobs@company.com`).
 
 ---
 
@@ -166,6 +173,15 @@ No implicit or untracked state transitions allowed.
 - HITL approval
 
 9.4 User must retain final authority.
+
+9.5 Job selection must be relevance-gated, not random.
+- Every scraped job is scored against the parsed CV (skills/experience overlap) before selection.
+- Only jobs clearing the minimum relevance bar may be selected for CV tailoring and outreach.
+- Jobs below the bar are recorded as `Matched` (seen, not pursued) — never silently dropped.
+
+9.6 CV tailoring may only rearrange, emphasize, or phrase existing candidate content — it must never fabricate skills or experience to force a fit with an unrelated job.
+- This holds even when the user says they don't care about interview risk: sending a real, fabricated CV to a real company is out of scope for this system, full stop.
+- The correct response to "my CV doesn't fit the jobs being fetched" is to fix job relevance matching (§9.5), not to fabricate the CV.
 
 ---
 
